@@ -1,0 +1,229 @@
+@file:Suppress("UnstableApiUsage")
+
+import com.diffplug.gradle.spotless.SpotlessExtension
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import org.jetbrains.kotlin.compose.compiler.gradle.ComposeFeatureFlag
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.diffplug.spotless)
+    alias(libs.plugins.mavenPublish)
+    alias(libs.plugins.androidx.baselineprofile)
+}
+
+private val measureSdkVersion = providers.gradleProperty("MEASURE_VERSION_NAME").get()
+private val groupId = providers.gradleProperty("GROUP").get()
+private val artifactId = providers.gradleProperty("MEASURE_ARTIFACT_ID").get()
+
+group = groupId
+
+mavenPublishing {
+    coordinates(groupId, artifactId, measureSdkVersion)
+    publishToMavenCentral(automaticRelease = true)
+
+    configure(
+        AndroidSingleVariantLibrary(
+            variant = "release",
+            sourcesJar = true,
+            publishJavadocJar = true,
+        ),
+    )
+
+    pom {
+        name.set("Measure Android SDK")
+        description.set("Measure Android SDK")
+        inceptionYear.set("2024")
+        url.set("https://github.com/measure-sh/measure")
+        licenses {
+            license {
+                name.set("Apache-2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                distribution.set("repo")
+            }
+        }
+        developers {
+            developer {
+                id.set("measure")
+                name.set("measure.sh")
+            }
+        }
+        scm {
+            url.set("https://github.com/measure-sh/measure")
+            connection.set("scm:git:git://github.com/measure-sh/measure.git")
+            developerConnection.set("scm:git:ssh://git@github.com/measure-sh/measure.git")
+        }
+    }
+}
+
+android {
+    namespace = "sh.measure.android"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 21
+        testOptions.targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
+        consumerProguardFiles("consumer-rules.pro")
+        aarMetadata {
+            minCompileSdk = 34
+        }
+    }
+
+    buildTypes {
+        defaultConfig {
+            buildConfigField("String", "MEASURE_SDK_VERSION", "\"$measureSdkVersion\"")
+        }
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "consumer-rules.pro",
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+            execution = "ANDROIDX_TEST_ORCHESTRATOR"
+        }
+    }
+    buildFeatures {
+        buildConfig = true
+        compose = true
+    }
+    externalNativeBuild {
+        cmake {
+            path("CMakeLists.txt")
+        }
+    }
+    packaging {
+        jniLibs.pickFirsts += "**/libmeasure-ndk.so"
+    }
+}
+
+kotlin {
+    // Keep the published Kotlin metadata and stdlib dependency readable by consumers on older
+    // Kotlin versions, even though AGP requires a newer Kotlin Gradle plugin to build.
+    coreLibrariesVersion = "1.9.21"
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_1_9)
+        apiVersion.set(KotlinVersion.KOTLIN_1_9)
+    }
+}
+
+composeCompiler {
+    // Strong skipping makes the compiler call Composer.changedInstance, which only exists in
+    // Compose runtime 1.4+. Keep it off so apps on older Compose versions don't crash.
+    featureFlags.add(ComposeFeatureFlag.StrongSkipping.disabled())
+}
+
+extensions.configure<SpotlessExtension>("spotless") {
+    configureSpotlessKotlin(this)
+    kotlinGradle {
+        ktlint()
+    }
+    format("misc") {
+        target(
+            ".gitignore",
+            ".gitattributes",
+            ".gitconfig",
+            ".editorconfig",
+            "*.md",
+            "src/**/*.md",
+            "docs/**/*.md",
+            "src/**/*.properties",
+        )
+        leadingTabsToSpaces()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+fun configureSpotlessKotlin(spotlessExtension: SpotlessExtension) {
+    spotlessExtension.kotlin {
+        ktlint().apply {
+            editorConfigOverride(
+                mapOf(
+                    "max_line_length" to 2147483647,
+                    "ktlint_function_naming_ignore_when_annotated_with" to "Composable",
+                ),
+            )
+        }
+        target("src/**/*.kt")
+    }
+}
+
+dependencies {
+    // Compile only, as we don't want to include the fragment dependency in the final artifact.
+    compileOnly(libs.androidx.fragment.ktx)
+    compileOnly(libs.androidx.compose.runtime.android)
+    compileOnly(libs.androidx.compose.ui)
+    compileOnly(libs.androidx.navigation.compose)
+    compileOnly(libs.androidx.navigation.fragment)
+    compileOnly(libs.squareup.okhttp)
+
+    // Compile only, so consumers who do not need ProfilingManager uploads are not forced to
+    // pull WorkManager (and its transitive Room dependency). Profiling is enabled only when the
+    // consumer adds androidx.work themselves; see WorkManagerAvailability.
+    compileOnly(libs.androidx.work.runtime)
+
+    implementation(libs.kotlinx.serialization.json)
+
+    implementation(libs.androidx.annotation)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity)
+    implementation(libs.squareup.okio)
+    implementation(libs.squareup.curtains)
+
+    testImplementation(libs.mockito.kotlin)
+    testImplementation(libs.junit)
+    testImplementation(libs.androidx.junit.ktx)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.fragment.testing)
+    testImplementation(libs.androidx.rules)
+    testImplementation(libs.androidx.compose.runtime.android)
+    testImplementation(libs.androidx.compose.ui)
+    testImplementation(libs.androidx.material3)
+    testImplementation(libs.squareup.okhttp.mockwebserver)
+    testImplementation(libs.androidx.work.runtime)
+    testImplementation(libs.androidx.work.testing)
+
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.4.3") {
+        isTransitive = false
+    }
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.compose.runtime.android)
+    androidTestImplementation(libs.androidx.compose.ui)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.material3)
+    androidTestImplementation(libs.androidx.lifecycle.process)
+    androidTestImplementation(libs.androidx.lifecycle.common)
+    androidTestImplementation(libs.androidx.activity.compose)
+    androidTestImplementation(libs.androidx.fragment.ktx)
+    androidTestImplementation(libs.androidx.navigation.compose)
+    androidTestImplementation(libs.androidx.rules)
+    androidTestImplementation(libs.androidx.uiautomator)
+    androidTestImplementation(libs.squareup.okhttp.mockwebserver)
+    androidTestUtil(libs.androidx.orchestrator)
+    androidTestImplementation(libs.androidx.benchmark.junit4)
+
+    baselineProfile(project(":benchmarks"))
+}
+
+baselineProfile {
+    saveInSrc = true
+    automaticGenerationDuringBuild = false
+    baselineProfileOutputDir = "generated/baselineProfiles"
+    filter {
+        include("sh.measure.android.**")
+    }
+}

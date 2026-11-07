@@ -1,0 +1,64 @@
+plugins {
+    alias(libs.plugins.android.test)
+    alias(libs.plugins.androidx.baselineprofile)
+}
+
+android {
+    namespace = "sh.measure.benchmark"
+    compileSdk = 36
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    defaultConfig {
+        minSdk = 28
+        targetSdk = 36
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        create("benchmark") {
+            isDebuggable = false
+            signingConfig = getByName("debug").signingConfig
+            matchingFallbacks += listOf("release")
+        }
+    }
+
+    targetProjectPath = ":baseline-target"
+
+    testOptions.managedDevices.localDevices {
+        create("pixel10Api37") {
+            device = "Pixel 10"
+            sdkVersion = 37
+            systemImageSource = "aosp"
+            testedAbi = "x86_64"
+        }
+    }
+}
+
+baselineProfile {
+    managedDevices += "pixel10Api37"
+    useConnectedDevices = false
+}
+
+dependencies {
+    implementation(libs.androidx.junit.ktx)
+    implementation(libs.androidx.espresso.core)
+    implementation(libs.androidx.uiautomator)
+    implementation(libs.androidx.benchmark.macro.junit4)
+}
+
+androidComponents {
+    onVariants { variant ->
+        val artifactsLoader = variant.artifacts.getBuiltArtifactsLoader()
+        variant.instrumentationRunnerArguments.put(
+            "targetAppId",
+            variant.testedApks.map { apkDir ->
+                artifactsLoader.load(apkDir)?.applicationId ?: "sh.measure.baseline.target"
+            }
+        )
+    }
+}
